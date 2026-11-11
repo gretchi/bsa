@@ -371,10 +371,10 @@ function hasBeats() { return S.rhythm !== "VF" && S.rhythm !== "ASY"; }
 function effectiveHr() { return S.rhythm === "VT" ? Math.max(S.hr, 140) : S.hr; }
 function spo2Valid() { return !S.probeOff && hasBeats(); }
 
-function scheduleBeats(tNow) {
+function scheduleBeats(tNow, ahead = 1.0) {
   if (!hasBeats()) { nextBeatT = tNow + 0.5; return; }
   if (nextBeatT < tNow - 2) nextBeatT = tNow;
-  while (nextBeatT < tNow + 1.0) {
+  while (nextBeatT < tNow + ahead) {
     let rr = 60 / Math.max(1, effectiveHr());
     let type = S.rhythm === "VT" ? "V" : "N";
     if (S.rhythm === "AF") rr *= 0.65 + Math.random() * 0.7;
@@ -516,7 +516,8 @@ function alarmTick() {
     curPri = audiblePri;
     nextBurstAt = ctx.currentTime + 0.05;
   }
-  if (curPri && ctx.currentTime >= nextBurstAt - 0.15) {
+  // バックグラウンドではタイマーが間引かれるので、先読みぶんまとめて予約しておく
+  while (curPri && ctx.currentTime >= nextBurstAt - lookahead()) {
     const at = Math.max(nextBurstAt, ctx.currentTime + 0.02);
     playBurst(curPri, at);
     nextBurstAt = at + cycleOf(pattern(curPri));
@@ -599,24 +600,44 @@ function updateNumerics(t) {
 }
 
 // ======================= Main loop =======================
-let channels;
-function frame() {
+// 音のスケジューリングは描画ループ（requestAnimationFrame）から切り離し、Worker のタイマーで回す。
+// requestAnimationFrame は非表示タブで止まり、メインスレッドの setInterval も 1 秒以上に間引かれるため、
+// 別タブに切り替えると音が途切れていた。Worker のタイマーは間引かれにくく、念のため先読みも長くとる。
+const lookahead = () => document.hidden ? 2.5 : 0.15;
+function audioTick() {
+  if (!ctx) return;
   const t = now();
-  scheduleBeats(t);
+  scheduleBeats(t, lookahead() + 0.9);
   // 同期音を QRS に合わせてスケジュール
   for (const b of beats) {
-    if (!b.sounded && b.t <= t + 0.08) {
+    if (!b.sounded && b.t <= t + lookahead()) {
       b.sounded = true;
       const delay = b.t - t;
       if (delay > -0.05) {
         const pulseOk = S.leadOff ? spo2Valid() : true;
         if (pulseOk) playPulse(ctx.currentTime + Math.max(0, delay) + (S.leadOff ? 0.22 : 0));
-        setTimeout(() => { $("heart").classList.add("on"); setTimeout(() => $("heart").classList.remove("on"), 120); }, Math.max(0, delay) * 1000);
+        if (!document.hidden) setTimeout(() => { $("heart").classList.add("on"); setTimeout(() => $("heart").classList.remove("on"), 120); }, Math.max(0, delay) * 1000);
       }
     }
   }
-  for (const ch of channels) drawChannel(ch, t);
   demoTick();
+  alarmTick();
+}
+function startTicker() {
+  try {
+    const src = "setInterval(() => postMessage(0), 50);";
+    const w = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+    w.onmessage = audioTick;
+  } catch (e) {
+    setInterval(audioTick, 50);   // Worker が使えない環境（file:// の一部ブラウザなど）
+  }
+  document.addEventListener("visibilitychange", () => { if (ctx && ctx.state === "suspended") ctx.resume(); audioTick(); });
+}
+
+let channels;
+function frame() {
+  const t = now();
+  for (const ch of channels) drawChannel(ch, t);
   updateNumerics(t);
   requestAnimationFrame(frame);
 }
@@ -688,7 +709,7 @@ $("startBtn").onclick = () => {
     makeChannel("cResp", "#ffe14a", respAt, -0.1, 1.1),
   ];
   bind(); syncControls();
-  setInterval(alarmTick, 100);
+  startTicker();
   measureNibp();
   requestAnimationFrame(frame);
 };
