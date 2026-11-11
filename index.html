@@ -1,0 +1,697 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bedside Monitor Simulator</title>
+<style>
+  :root {
+    --bg: #000; --panel: #0b0f14; --line: #1f2a36; --text: #d8e2ec; --muted: #7d8b99;
+    --ecg: #3cff5a; --spo2: #36d7ff; --resp: #ffe14a; --nibp: #f2f2f2;
+    --high: #ff2b2b; --med: #ffd500; --low: #2fd6ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif; }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+
+  #alarmBar { height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 16px;
+    font-weight: 700; font-size: 18px; border-bottom: 1px solid var(--line); background: #05080b; }
+  #alarmBar .msg { padding: 4px 10px; border-radius: 3px; white-space: nowrap; }
+  #alarmBar .msg.high { background: var(--high); color: #fff; }
+  #alarmBar .msg.med  { background: var(--med); color: #000; }
+  #alarmBar .msg.low  { background: var(--low); color: #000; }
+  #alarmBar .msgs { display: flex; gap: 8px; overflow: hidden; flex: 1; }
+  #alarmBar .clock { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 400; }
+  #alarmBar .sil { color: var(--med); font-size: 14px; }
+  .flash-high .msg.high { animation: fh .5s steps(1) infinite; }
+  .flash-med .msg.med { animation: fh 1.6s steps(1) infinite; }
+  @keyframes fh { 50% { opacity: .25; } }
+  #lamp { width: 18px; height: 18px; border-radius: 50%; background: #222; flex: none; }
+  #lamp.high { background: var(--high); box-shadow: 0 0 14px var(--high); animation: fh .5s steps(1) infinite; }
+  #lamp.med  { background: var(--med); box-shadow: 0 0 10px var(--med); animation: fh 1.6s steps(1) infinite; }
+  #lamp.low  { background: var(--low); box-shadow: 0 0 8px var(--low); }
+
+  main { flex: 1; display: grid; grid-template-columns: 1fr 300px; min-height: 0; }
+  .waves { display: grid; grid-template-rows: 2fr 1.3fr 1fr; border-right: 1px solid var(--line); min-height: 360px; }
+  .wave { position: relative; border-bottom: 1px solid var(--line); min-height: 0; }
+  .wave canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .wave .lbl { position: absolute; left: 8px; top: 4px; font-size: 13px; z-index: 1; }
+
+  .nums { display: grid; grid-template-rows: 2fr 1.3fr 1fr 1fr; }
+  .num { border-bottom: 1px solid var(--line); padding: 6px 12px; position: relative; display: flex; flex-direction: column; }
+  .num .h { display: flex; justify-content: space-between; font-size: 13px; }
+  .num .lim { font-size: 11px; color: var(--muted); text-align: right; line-height: 1.2; }
+  .num .v { font-size: 64px; font-weight: 300; line-height: 1; margin-top: auto; text-align: right;
+    font-variant-numeric: tabular-nums; }
+  .num.big .v { font-size: 88px; }
+  .num.alarm-high .v { background: var(--high); color: #fff !important; animation: fh .5s steps(1) infinite; }
+  .num.alarm-med .v { background: var(--med); color: #000 !important; }
+  .heart { color: var(--ecg); opacity: 0; transition: opacity .08s; }
+  .heart.on { opacity: 1; }
+
+  .controls { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 16px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 20px; }
+  .controls fieldset { border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px 10px; margin: 0; min-width: 0; }
+  .controls legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
+  .row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 4px 0; }
+  .row label { width: 64px; flex: none; color: var(--muted); }
+  .row input[type=range] { flex: 1; min-width: 0; }
+  .row output { width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
+  .row input[type=number] { width: 58px; background: #000; color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 2px 4px; }
+  select, button { background: #16202b; color: var(--text); border: 1px solid #2c3b4b; border-radius: 4px;
+    padding: 6px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+  button:hover { background: #1f2d3c; }
+  button.primary { background: #0f5132; border-color: #198754; }
+  button.warn { background: #5c4a00; border-color: #b38f00; }
+  button.on { outline: 2px solid var(--low); }
+  .btns { display: flex; flex-wrap: wrap; gap: 6px; }
+  #demoInfo { font-size: 12px; color: var(--low); margin-top: 6px; min-height: 1em; }
+
+  #start { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: flex; align-items: center;
+    justify-content: center; flex-direction: column; gap: 16px; z-index: 10; text-align: center; padding: 16px; }
+  #start button { font-size: 20px; padding: 14px 28px; }
+  #start p { color: var(--muted); max-width: 520px; font-size: 14px; }
+
+  @media (max-width: 760px) {
+    main { grid-template-columns: 1fr; }
+    .waves { border-right: 0; min-height: 300px; }
+    .nums { grid-template-columns: 1fr 1fr; grid-template-rows: auto; }
+    .num .v, .num.big .v { font-size: 48px; }
+    #alarmBar { font-size: 14px; }
+  }
+</style>
+</head>
+<body>
+<div id="start">
+  <h1>Bedside Monitor Simulator</h1>
+  <button class="primary" id="startBtn">▶ 開始（音声を有効化）</button>
+  <p>心電図同期音と、高・中・低優先度のアラーム音を再現する学習用シミュレーターです。医療用途には使用しないでください。</p>
+</div>
+
+<div id="alarmBar">
+  <div id="lamp"></div>
+  <div class="msgs" id="msgs"></div>
+  <span class="sil" id="silInfo"></span>
+  <span class="clock" id="clock"></span>
+</div>
+
+<main>
+  <div class="waves">
+    <div class="wave"><span class="lbl" style="color:var(--ecg)">ECG II ×1.0 &nbsp;25mm/s</span><canvas id="cEcg"></canvas></div>
+    <div class="wave"><span class="lbl" style="color:var(--spo2)">Pleth</span><canvas id="cPleth"></canvas></div>
+    <div class="wave"><span class="lbl" style="color:var(--resp)">Resp (Imp)</span><canvas id="cResp"></canvas></div>
+  </div>
+  <div class="nums">
+    <div class="num big" id="nHr" style="color:var(--ecg)">
+      <div class="h"><span>HR <span class="heart" id="heart">♥</span></span><span class="lim" id="limHr"></span></div>
+      <div class="v" id="vHr">--</div>
+    </div>
+    <div class="num" id="nSpo2" style="color:var(--spo2)">
+      <div class="h"><span>SpO2 %</span><span class="lim" id="limSpo2"></span></div>
+      <div class="v" id="vSpo2">--</div>
+    </div>
+    <div class="num" id="nRr" style="color:var(--resp)">
+      <div class="h"><span>RR</span><span class="lim" id="limRr"></span></div>
+      <div class="v" id="vRr">--</div>
+    </div>
+    <div class="num" id="nNibp" style="color:var(--nibp)">
+      <div class="h"><span>NIBP mmHg</span><span class="lim" id="nibpTime"></span></div>
+      <div class="v" id="vNibp" style="font-size:40px">---/---</div>
+    </div>
+  </div>
+</main>
+
+<div class="controls">
+  <fieldset>
+    <legend>患者パラメータ</legend>
+    <div class="row"><label>リズム</label>
+      <select id="rhythm">
+        <option value="NSR">洞調律</option>
+        <option value="AF">心房細動</option>
+        <option value="PVC">PVC 散発</option>
+        <option value="VT">VT（心室頻拍）</option>
+        <option value="VF">VF（心室細動）</option>
+        <option value="ASY">心静止</option>
+      </select></div>
+    <div class="row"><label>HR</label><input type="range" id="hr" min="20" max="220" value="72"><output id="oHr"></output></div>
+    <div class="row"><label>SpO2</label><input type="range" id="spo2" min="50" max="100" value="98"><output id="oSpo2"></output></div>
+    <div class="row"><label>RR</label><input type="range" id="rr" min="0" max="50" value="16"><output id="oRr"></output></div>
+  </fieldset>
+  <fieldset>
+    <legend>アラーム上下限</legend>
+    <div class="row"><label>HR</label><input type="number" id="hrLo" value="50"> – <input type="number" id="hrHi" value="120"></div>
+    <div class="row"><label>SpO2 下限</label><input type="number" id="spo2Lo" value="90"></div>
+    <div class="row"><label>RR</label><input type="number" id="rrLo" value="8"> – <input type="number" id="rrHi" value="30"></div>
+  </fieldset>
+  <fieldset>
+    <legend>音量 / 状態</legend>
+    <div class="row"><label>同期音</label><input type="range" id="volPulse" min="0" max="100" value="50"><output id="oVolPulse"></output></div>
+    <div class="row"><label>アラーム</label><input type="range" id="volAlarm" min="0" max="100" value="60"><output id="oVolAlarm"></output></div>
+    <div class="row"><label>同期音</label>
+      <select id="syncType">
+        <option value="LS">LifeScope TS（940Hz）</option>
+        <option value="NK">日本光電 標準（784Hz）</option>
+        <option value="BSM">BSM-2301（894Hz）</option>
+      </select></div>
+    <div class="row"><label></label><label style="width:auto;color:var(--text)"><input type="checkbox" id="syncTrack"> SpO2 で音程を変える</label></div>
+    <div class="btns">
+      <button id="leadOff">電極外れ</button>
+      <button id="probeOff">プローブ外れ</button>
+      <button id="nibpBtn">NIBP 測定</button>
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>アラーム操作</legend>
+    <div class="btns">
+      <button class="warn" id="silence">🔕 消音（2分）</button>
+      <button class="primary" id="demo">▶ デモアラーム</button>
+    </div>
+    <div class="row" style="margin-top:6px"><label>音タイプ</label>
+      <select id="soundType">
+        <option value="NK1">NK1</option>
+        <option value="NK2">NK2</option>
+        <option value="BSM">BSM-2301</option>
+        <option value="IEC">IEC</option>
+      </select>
+      <select id="advInt" title="アドバイザリ音の繰り返し間隔">
+        <option value="20">20 s</option>
+        <option value="120">120 s</option>
+      </select></div>
+    <div class="btns">
+      <button data-test="high">クライシス</button>
+      <button data-test="med">ワーニング</button>
+      <button data-test="low">アドバイザリ</button>
+    </div>
+    <div id="demoInfo"></div>
+  </fieldset>
+</div>
+
+<script>
+"use strict";
+// ======================= State =======================
+const S = {
+  rhythm: "NSR", hr: 72, spo2: 98, rr: 16,
+  leadOff: false, probeOff: false,
+  limits: { hrLo: 50, hrHi: 120, spo2Lo: 90, rrLo: 8, rrHi: 30 },
+  volPulse: 0.5, volAlarm: 0.6,
+  nibp: null, nibpAt: null,
+};
+const $ = id => document.getElementById(id);
+const now = () => performance.now() / 1000;
+
+// ======================= Audio =======================
+let ctx, pulseBus, alarmBus, alarmWave;
+function initAudio() {
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const comp = ctx.createDynamicsCompressor();
+  comp.connect(ctx.destination);
+  pulseBus = ctx.createGain(); pulseBus.connect(comp);
+  alarmBus = ctx.createGain(); alarmBus.connect(comp);
+  applyVolumes();
+}
+function applyVolumes() {
+  if (!ctx) return;
+  pulseBus.gain.value = S.volPulse * 0.6;
+  alarmBus.gain.value = S.volAlarm * 0.5;
+}
+
+// ---- 音源（3 本の動画の録音を解析して得た値）----
+// 1: LifeScope TS デモ https://www.youtube.com/watch?v=VL5GPBYp9R4
+// 2: BSM-2301 紹介    https://www.youtube.com/watch?v=KpVvuiz1LaQ （SOUND CHECK 画面）
+// 3: 日本光電 音源集   https://www.youtube.com/watch?v=IKfJOQkzVNU
+//
+// voice(): 1 つの音（倍音つき）を鳴らす。パラメータ:
+//   f 基本周波数, harm [[倍音次数, 振幅], ...], dur 鳴っている長さ（この後リリース）
+//   a アタック, hold 減衰が始まるまでの保持, tau 減衰の時定数（null なら一定）, sus 減衰の下限
+//   drop リリース開始時に一段下げる比率, rel リリースの時定数, lvl 音量
+//   gate {period, on:[開始, 終了], until, after} 周期的に ON/OFF（トリル用）
+//   am {period, rise, tau} 周期的に打ち直す振幅変調（「ビビビ」用）
+let alarmNodes = [];
+function track(o) { alarmNodes.push(o); o.onended = () => { alarmNodes = alarmNodes.filter(n => n !== o); }; }
+function voice(at, n, bus, keep = true) {
+  const { f, harm = [[1, 1]], dur, a = .01, hold = 0, tau = null, sus = 0, drop = 1, rel = .02, lvl = 1 } = n;
+  const g = ctx.createGain(), gp = g.gain;
+  gp.setValueAtTime(0, at);
+  gp.linearRampToValueAtTime(lvl, at + a);
+  let vEnd = lvl;
+  if (tau) {
+    const t0 = at + a + hold;
+    gp.setValueAtTime(lvl, t0);
+    gp.setTargetAtTime(lvl * sus, t0, tau);
+    vEnd = lvl * (sus + (1 - sus) * Math.exp(-Math.max(0, dur - a - hold) / tau));
+  }
+  gp.setValueAtTime(vEnd, at + dur);
+  let tr = at + dur;
+  if (drop < 1) { gp.linearRampToValueAtTime(vEnd * drop, at + dur + .015); tr += .015; }
+  gp.setTargetAtTime(0, tr, rel);
+  const end = tr + rel * 7;
+  g.connect(bus);
+  let head = g;
+  if (n.gate) {             // トリル: 決められた区間だけ ON
+    const gg = ctx.createGain(), q = gg.gain, { period: P, on: [s, e], until = dur, after = 0 } = n.gate, r = .003;
+    const T = at + until;
+    let isOn = false;
+    q.setValueAtTime(0, at);
+    for (let c = at; c + s < T - 1e-6; c += P) {
+      q.setValueAtTime(0, c + s); q.linearRampToValueAtTime(1, c + s + r); isOn = true;
+      if (after && c + e >= T) break;          // 最後の ON はそのまま余韻へ
+      const off = Math.min(c + e, T);
+      q.setValueAtTime(1, off - r); q.linearRampToValueAtTime(0, off); isOn = false;
+    }
+    if (after && !isOn) { q.setValueAtTime(0, T); q.linearRampToValueAtTime(1, T + r); }
+    gg.connect(head); head = gg;
+  }
+  if (n.am) {               // 「ビビビ」: period ごとに打ち直して tau で減衰
+    const ag = ctx.createGain(), q = ag.gain, { period: P, rise = .012, tau: ta } = n.am;
+    q.setValueAtTime(0, at);
+    for (let c = at, v = 0; c < at + dur - 1e-6; c += P) {
+      q.setValueAtTime(v, c); q.linearRampToValueAtTime(1, c + rise); q.setTargetAtTime(0, c + rise, ta);
+      v = Math.exp(-(P - rise) / ta);
+    }
+    ag.connect(head); head = ag;
+  }
+  const sum = harm.reduce((s, [, x]) => s + x, 0);
+  for (const [m, x] of harm) {
+    if (f * m > 12000) continue;
+    const o = ctx.createOscillator(); o.frequency.value = f * m;
+    const ga = ctx.createGain(); ga.gain.value = x / sum;
+    o.connect(ga).connect(head); o.start(at); o.stop(end);
+    if (keep) track(o);
+  }
+}
+
+// ---- 同期音 ----
+// どの動画でも 1 拍ごとの音程は一定。SpO2 連動（1% = 半音）はオプション。
+const SYNC = {
+  // 動画1: 940Hz の純音、約 70ms の短い「ピッ」
+  LS:  { f: 940, harm: [[1, 1], [2, .01]], a: .02, hold: .045, tau: .025, dur: .2, rel: .02 },
+  // 動画3: 784Hz、3 倍音が強い（-13dB）やわらかい矩形波。150ms 保持して減衰、計約 0.28s
+  NK:  { f: 784, harm: [[1, 1], [2, .056], [3, .22], [4, .025], [5, .056]], a: .025, hold: .15, tau: .06, dur: .4, rel: .03 },
+  // 動画2: BSM-2301 QRS BEEP（HIGH TONE）894Hz の矩形波、約 70ms
+  BSM: { f: 894, harm: [[1, 1], [3, .45], [5, .2], [7, .1]], a: .005, hold: .055, tau: .02, dur: .16, rel: .015 },
+};
+let syncType = "LS", syncTrack = false;
+function pulseFreq() {
+  const base = SYNC[syncType].f;
+  if (!syncTrack || !spo2Valid()) return base;
+  const s = Math.max(50, Math.min(100, Math.round(S.spo2)));
+  return base * Math.pow(2, (s - 98) / 12);
+}
+function playPulse(at) {
+  if (!ctx || S.volPulse <= 0) return;
+  voice(at, { ...SYNC[syncType], f: pulseFreq() }, pulseBus, false);
+}
+
+// ---- アラーム音 ----
+// high = クライシス, med = ワーニング, low = アドバイザリ。ev: [[開始時刻, voice パラメータ], ...]
+const C4 = 261.6, E4 = 329.6, G4 = 392.0, C5 = 523.3;
+const T_IEC = { harm: [[1, 1], [2, .7], [3, .8], [4, .9], [5, .7], [6, .3], [10, .2]], a: .012, dur: .15, rel: .015, lvl: .9 };
+const iecSeq = (notes, offs, base = 0) => notes.map((f, i) => [base + offs[i], { ...T_IEC, f }]);
+const ADV_NK = { f: 727, harm: [[1, 1], [3, .45]], a: .004, tau: .43, dur: .85, rel: .03 }; // 推定
+const NK1_TRILL = .0575;   // 動画1: 939Hz と 1147Hz が 57.5ms 周期で交互
+const NK2_W = [[1, 1], [2, .18]];
+let advInterval = 20;
+const SOUNDS = {
+  NK1: {
+    // 917Hz の純音: 0.26s 鳴らし、-7dB に落ちてから余韻（1s 周期）
+    med:  { cycle: 1.0, ev: [[0, { f: 917, harm: [[1, 1], [2, .002]], a: .02, dur: .265, drop: .45, rel: .1 }]] },
+    // 「ピロロロ」: 1147Hz（2 倍音 -8dB）と 939Hz を高速に交互、0.37s 後に 1147Hz の余韻（1s 周期）
+    high: { cycle: 1.0, ev: [
+      [0, { f: 1147, harm: [[1, 1], [2, .4], [3, .045]], dur: .37, rel: .035,
+            gate: { period: NK1_TRILL, on: [0, .0395], until: .37, after: 1 } }],
+      [0, { f: 939, harm: [[1, 1], [2, .014]], dur: .37, rel: .01, lvl: .9,
+            gate: { period: NK1_TRILL, on: [.0395, NK1_TRILL] } }],
+    ] },
+    low: { cycle: () => advInterval, ev: [[0, ADV_NK]] },
+  },
+  NK2: {
+    // 「ポ・ポーン」: 870Hz を 2 回打鍵。2 打目は -6.5dB まで減衰してその音量で保持（1.96s 周期）
+    med: { cycle: 1.96, ev: [
+      [0,  { f: 870, harm: NK2_W, a: .02, tau: .35, dur: .3, rel: .008, lvl: .85 }],
+      [.3, { f: 870, harm: NK2_W, a: .02, hold: .08, tau: .17, sus: .45, dur: 1.17, rel: .012 }],
+    ] },
+    // 1272Hz のチャイム（2 倍音 -7dB）、0.72s 間隔で連打
+    high: { cycle: .72, ev: [[0, { f: 1272.5, harm: [[1, 1], [2, .45]], a: .004, tau: .40, dur: .7, rel: .008 }]] },
+    low:  { cycle: () => advInterval, ev: [[0, ADV_NK]] },
+  },
+  BSM: {
+    // ALARM SOUND1「ビビビ」: 1091Hz（2 倍音が基音より強い）を 60ms ごとに打ち直す、0.55s（1.02s 周期）
+    high: { cycle: 1.02, ev: [[0, { f: 1091, harm: [[1, .35], [2, 1], [4, .03], [5, .035]], dur: .55, rel: .05,
+            am: { period: .0605, rise: .012, tau: .026 } }]] },
+    // ALARM SOUND2「ピポー」: 881Hz 0.18s → 700Hz 0.52s（1.06s 周期）
+    med: { cycle: 1.06, ev: [
+      [0,   { f: 881, harm: [[1, 1], [2, .013]], dur: .18, rel: .07, lvl: .7 }],
+      [.17, { f: 700, harm: [[1, 1], [2, .006]], a: .015, dur: .52, rel: .02, lvl: .7 }],
+    ] },
+    // ALARM SOUND3「ポー」: 700Hz 0.7s
+    low: { cycle: () => advInterval, ev: [[0, { f: 700, a: .015, dur: .7, rel: .03 }]] },
+  },
+  IEC: {
+    // ド・ミ・ソ ― ソ・ド を 1.8 秒間隔で 2 回（計 10 パルス）
+    high: { cycle: 9.6, ev: [0, 1.8].flatMap(b => iecSeq([C4, E4, G4, G4, C5], [0, .24, .48, .96, 1.2], b)) },
+    // ド・ミ・ソ（0.35 秒間隔）
+    med:  { cycle: 9.9, ev: iecSeq([C4, E4, G4], [0, .35, .70]) },
+    // ミ・ド
+    low:  { cycle: () => advInterval, ev: iecSeq([E4, C4], [0, .35]) },
+  },
+};
+let soundType = "NK1";
+const pattern = pri => SOUNDS[soundType][pri];
+const cycleOf = p => typeof p.cycle === "function" ? p.cycle() : p.cycle;
+function playBurst(pri, at) { pattern(pri).ev.forEach(([t, n]) => voice(at + t, n, alarmBus)); }
+function stopAlarmSound() { alarmNodes.forEach(o => { try { o.stop(); } catch (e) {} }); alarmNodes = []; }
+
+// ======================= Waveform models =======================
+const gauss = (t, mu, w) => Math.exp(-((t - mu) ** 2) / (2 * w * w));
+let beats = [];          // {t, type:'N'|'V', sounded}
+let nextBeatT = 0;
+
+function hasBeats() { return S.rhythm !== "VF" && S.rhythm !== "ASY"; }
+function effectiveHr() { return S.rhythm === "VT" ? Math.max(S.hr, 140) : S.hr; }
+function spo2Valid() { return !S.probeOff && hasBeats(); }
+
+function scheduleBeats(tNow) {
+  if (!hasBeats()) { nextBeatT = tNow + 0.5; return; }
+  if (nextBeatT < tNow - 2) nextBeatT = tNow;
+  while (nextBeatT < tNow + 1.0) {
+    let rr = 60 / Math.max(1, effectiveHr());
+    let type = S.rhythm === "VT" ? "V" : "N";
+    if (S.rhythm === "AF") rr *= 0.65 + Math.random() * 0.7;
+    else rr *= 1 + (Math.random() - 0.5) * 0.03;
+    if (S.rhythm === "PVC" && Math.random() < 0.15 && beats.length && beats[beats.length - 1].type === "N") {
+      type = "V"; rr *= 0.65;
+    }
+    beats.push({ t: nextBeatT, type, sounded: false, rr });
+    // PVC の後は代償性休止
+    nextBeatT += type === "V" && S.rhythm === "PVC" ? rr * 1.9 : rr;
+  }
+  beats = beats.filter(b => b.t > tNow - 4);
+}
+
+function ecgAt(t) {
+  if (S.leadOff) return 0;
+  let v = 0.015 * Math.sin(t * 2 * Math.PI * 0.25) + (Math.random() - 0.5) * 0.015;
+  if (S.rhythm === "VF") {
+    const am = 0.6 + 0.4 * Math.sin(2 * Math.PI * 0.27 * t);
+    return v + am * (0.45 * Math.sin(2 * Math.PI * 4.9 * t) + 0.25 * Math.sin(2 * Math.PI * 3.3 * t + 1.3) + 0.15 * Math.sin(2 * Math.PI * 7.1 * t + 0.4));
+  }
+  if (S.rhythm === "ASY") return v;
+  if (S.rhythm === "AF") v += 0.04 * Math.sin(2 * Math.PI * 6.3 * t) + 0.03 * Math.sin(2 * Math.PI * 8.9 * t + 2);
+  for (const b of beats) {
+    const d = t - b.t;
+    if (d < -0.3 || d > 0.7) continue;
+    if (b.type === "N") {
+      const qt = Math.min(0.32, 0.18 + 0.12 * Math.sqrt(b.rr));
+      if (S.rhythm !== "AF") v += 0.12 * gauss(d, -0.16, 0.022);
+      v += -0.1 * gauss(d, -0.028, 0.009) + 1.0 * gauss(d, 0, 0.011) - 0.22 * gauss(d, 0.03, 0.011) + 0.28 * gauss(d, qt * 0.85, 0.045);
+    } else {
+      v += 1.1 * gauss(d, 0, 0.04) - 0.55 * gauss(d, 0.09, 0.05) - 0.25 * gauss(d, 0.26, 0.07);
+    }
+  }
+  return v;
+}
+function plethAt(t) {
+  if (!spo2Valid()) return 0;
+  let v = 0;
+  for (const b of beats) {
+    const d = t - b.t - 0.22;
+    if (d < -0.2 || d > 1.2) continue;
+    const amp = b.type === "V" ? 0.45 : 1;
+    v += amp * (gauss(d, 0.11, 0.05) + 0.42 * gauss(d, 0.33, 0.07) + 0.25 * gauss(d, 0.55, 0.15));
+  }
+  return v;
+}
+function respAt(t) {
+  if (S.leadOff || S.rr <= 0) return 0;
+  const ph = (t * S.rr / 60) % 1;
+  return ph < 0.4 ? Math.sin(ph / 0.4 * Math.PI / 2) : Math.cos((ph - 0.4) / 0.6 * Math.PI / 2) ** 2;
+}
+
+// ======================= Sweep display =======================
+const SWEEP_SEC = 6;
+function makeChannel(id, color, fn, lo, hi) {
+  const c = $(id), g = c.getContext("2d");
+  const ch = { c, g, color, fn, lo, hi, lastT: null, px: 0, py: null };
+  const resize = () => {
+    const dpr = window.devicePixelRatio || 1, r = c.getBoundingClientRect();
+    c.width = Math.max(1, r.width * dpr); c.height = Math.max(1, r.height * dpr);
+    g.fillStyle = "#000"; g.fillRect(0, 0, c.width, c.height); ch.py = null;
+  };
+  new ResizeObserver(resize).observe(c); resize();
+  return ch;
+}
+function drawChannel(ch, tNow) {
+  const { c, g } = ch, W = c.width, H = c.height, pps = W / SWEEP_SEC;
+  if (ch.lastT === null || tNow - ch.lastT > 1) ch.lastT = tNow - 1 / 60;
+  const dpr = window.devicePixelRatio || 1;
+  g.strokeStyle = ch.color; g.lineWidth = 1.8 * dpr; g.lineJoin = "round";
+  const step = 1 / pps;
+  for (let t = ch.lastT + step; t <= tNow; t += step) {
+    const x = (t * pps) % W;
+    const yv = ch.fn(t);
+    const y = H - ((yv - ch.lo) / (ch.hi - ch.lo)) * H * 0.8 - H * 0.1;
+    g.fillStyle = "#000"; g.fillRect(x, 0, Math.max(14 * dpr, W * 0.02), H);
+    if (ch.py !== null && x >= ch.px) {
+      g.beginPath(); g.moveTo(ch.px, ch.py); g.lineTo(x, y); g.stroke();
+    }
+    ch.px = x; ch.py = y; ch.lastT = t;
+  }
+  if (S.leadOff && ch.fn === ecgAt || (!spo2Valid() && ch.fn === plethAt && S.probeOff)) {
+    g.fillStyle = "#000"; g.fillRect(W * 0.35, H * 0.35, W * 0.3, H * 0.3);
+    g.fillStyle = ch.color; g.font = `${16 * dpr}px sans-serif`; g.textAlign = "center";
+    g.fillText(ch.fn === ecgAt ? "電極を確認してください" : "プローブを確認してください", W / 2, H / 2 + 6 * dpr);
+  }
+}
+
+// ======================= Alarms =======================
+const PRI_RANK = { high: 3, med: 2, low: 1 };
+function evalAlarms() {
+  const L = S.limits, a = [];
+  if (!S.leadOff) {
+    if (S.rhythm === "ASY") a.push(["high", "ASYSTOLE"]);
+    if (S.rhythm === "VF") a.push(["high", "VF"]);
+    if (S.rhythm === "VT") a.push(["high", "VT"]);
+  }
+  if (hasBeats()) {
+    const hr = Math.round(effectiveHr());
+    if (S.rhythm !== "VT" && hr > L.hrHi) a.push(["med", `HR 上限 ${hr} > ${L.hrHi}`]);
+    if (hr < L.hrLo) a.push(["med", `HR 下限 ${hr} < ${L.hrLo}`]);
+  }
+  if (spo2Valid() && Math.round(S.spo2) < L.spo2Lo) a.push([S.spo2 < L.spo2Lo - 5 ? "high" : "med", `SpO2 下限 ${Math.round(S.spo2)} < ${L.spo2Lo}`]);
+  if (!S.leadOff) {
+    if (S.rr === 0) a.push(["high", "APNEA"]);
+    else if (S.rr > L.rrHi) a.push(["med", `RR 上限 ${S.rr} > ${L.rrHi}`]);
+    else if (S.rr < L.rrLo) a.push(["med", `RR 下限 ${S.rr} < ${L.rrLo}`]);
+  }
+  if (S.leadOff) a.push(["low", "電極外れ"]);
+  if (S.probeOff) a.push(["low", "SpO2 プローブ外れ"]);
+  a.sort((x, y) => PRI_RANK[y[0]] - PRI_RANK[x[0]]);
+  return a;
+}
+
+let curPri = null, nextBurstAt = 0, silencedUntil = 0, silencedSet = new Set(), testUntil = 0;
+function alarmTick() {
+  if (!ctx) return;
+  const t = now(), list = evalAlarms();
+  // 新しいアラームが発生したら消音を解除
+  if (t < silencedUntil && list.some(([, m]) => !silencedSet.has(m.split(" ")[0] + m.split(" ")[1]))) silencedUntil = 0;
+  const silenced = t < silencedUntil;
+  const pri = list.length ? list[0][0] : null;
+
+  // 表示
+  const bar = $("alarmBar");
+  $("msgs").innerHTML = list.map(([p, m]) => `<span class="msg ${p}">${m}</span>`).join("");
+  bar.className = pri === "high" ? "flash-high" : pri === "med" ? "flash-med" : "";
+  $("lamp").className = pri || "";
+  $("silInfo").textContent = silenced ? `🔕 消音中 ${Math.ceil(silencedUntil - t)}s` : "";
+  numAlarm("nHr", list, ["HR", "ASYSTOLE", "VF", "VT"]);
+  numAlarm("nSpo2", list, ["SpO2"]);
+  numAlarm("nRr", list, ["RR", "APNEA"]);
+
+  if (t < testUntil) return;
+  const audiblePri = silenced ? null : pri;
+  if (audiblePri !== curPri) {
+    stopAlarmSound();
+    curPri = audiblePri;
+    nextBurstAt = ctx.currentTime + 0.05;
+  }
+  if (curPri && ctx.currentTime >= nextBurstAt - 0.15) {
+    const at = Math.max(nextBurstAt, ctx.currentTime + 0.02);
+    playBurst(curPri, at);
+    nextBurstAt = at + cycleOf(pattern(curPri));
+  }
+}
+function numAlarm(id, list, keys) {
+  const hit = list.find(([, m]) => keys.some(k => m.startsWith(k)));
+  $(id).classList.toggle("alarm-high", !!hit && hit[0] === "high");
+  $(id).classList.toggle("alarm-med", !!hit && hit[0] === "med");
+}
+
+// ======================= Demo =======================
+const DEMO = [
+  { name: "正常", set: { rhythm: "NSR", hr: 72, spo2: 98, rr: 16, leadOff: false, probeOff: false } },
+  { name: "頻脈 → HR 上限アラーム（ワーニング）", set: { hr: 138 } },
+  { name: "SpO2 低下 → SpO2 下限アラーム", set: { hr: 96 }, ramp: { spo2: 82 } },
+  { name: "回復", set: { hr: 76 }, ramp: { spo2: 97 } },
+  { name: "徐脈 → HR 下限アラーム（ワーニング）", set: { hr: 38 } },
+  { name: "電極外れ（アドバイザリ）", set: { hr: 72, leadOff: true } },
+  { name: "VT（クライシス）", set: { leadOff: false, rhythm: "VT", hr: 180 } },
+  { name: "VF（クライシス）", set: { rhythm: "VF" } },
+  { name: "心静止 ASYSTOLE（クライシス）", set: { rhythm: "ASY", rr: 0 } },
+  { name: "洞調律に復帰", set: { rhythm: "NSR", hr: 72, rr: 16 } },
+];
+const DEMO_STEP = 12;
+let demo = null;
+function startDemo() {
+  demo = { i: -1, t0: 0, ramp: null };
+  $("demo").textContent = "■ デモ停止"; $("demo").classList.add("on");
+  silencedUntil = 0; nextDemoStep();
+}
+function stopDemo() {
+  demo = null; $("demo").textContent = "▶ デモアラーム"; $("demo").classList.remove("on"); $("demoInfo").textContent = "";
+}
+function nextDemoStep() {
+  demo.i = (demo.i + 1) % DEMO.length;
+  const st = DEMO[demo.i];
+  Object.assign(S, st.set);
+  demo.t0 = now();
+  demo.ramp = st.ramp ? Object.entries(st.ramp).map(([k, v]) => [k, S[k], v]) : null;
+  syncControls();
+}
+function demoTick() {
+  if (!demo) return;
+  const el = now() - demo.t0;
+  if (demo.ramp) {
+    const k = Math.min(1, el / 8);
+    for (const [key, a, b] of demo.ramp) S[key] = a + (b - a) * k;
+    syncControls();
+  }
+  $("demoInfo").textContent = `DEMO ${demo.i + 1}/${DEMO.length}: ${DEMO[demo.i].name}（${Math.ceil(DEMO_STEP - el)}s）`;
+  if (el >= DEMO_STEP) nextDemoStep();
+}
+
+// ======================= Numerics =======================
+let lastNumUpdate = 0, shownHr = null;
+function updateNumerics(t) {
+  if (t - lastNumUpdate < 1) return;
+  lastNumUpdate = t;
+  // HR は直近の RR 間隔から算出（AF では揺らぐ）
+  let hrTxt = "---";
+  if (S.rhythm === "ASY" && !S.leadOff) hrTxt = "0";
+  else if (S.rhythm === "VF" || S.leadOff && !spo2Valid()) hrTxt = "---";
+  else {
+    const past = beats.filter(b => b.t <= t).slice(-6);
+    if (past.length >= 2) {
+      const avg = (past[past.length - 1].t - past[0].t) / (past.length - 1);
+      shownHr = Math.round(60 / avg);
+    } else shownHr = Math.round(effectiveHr());
+    hrTxt = String(shownHr);
+  }
+  $("vHr").textContent = hrTxt;
+  $("vSpo2").textContent = spo2Valid() ? Math.round(S.spo2) : "---";
+  $("vRr").textContent = S.leadOff ? "---" : S.rr;
+  const L = S.limits;
+  $("limHr").innerHTML = `${L.hrHi}<br>${L.hrLo}`;
+  $("limSpo2").innerHTML = `100<br>${L.spo2Lo}`;
+  $("limRr").innerHTML = `${L.rrHi}<br>${L.rrLo}`;
+  $("clock").textContent = new Date().toLocaleTimeString("ja-JP");
+}
+
+// ======================= Main loop =======================
+let channels;
+function frame() {
+  const t = now();
+  scheduleBeats(t);
+  // 同期音を QRS に合わせてスケジュール
+  for (const b of beats) {
+    if (!b.sounded && b.t <= t + 0.08) {
+      b.sounded = true;
+      const delay = b.t - t;
+      if (delay > -0.05) {
+        const pulseOk = S.leadOff ? spo2Valid() : true;
+        if (pulseOk) playPulse(ctx.currentTime + Math.max(0, delay) + (S.leadOff ? 0.22 : 0));
+        setTimeout(() => { $("heart").classList.add("on"); setTimeout(() => $("heart").classList.remove("on"), 120); }, Math.max(0, delay) * 1000);
+      }
+    }
+  }
+  for (const ch of channels) drawChannel(ch, t);
+  demoTick();
+  updateNumerics(t);
+  requestAnimationFrame(frame);
+}
+
+// ======================= Controls =======================
+function syncControls() {
+  $("rhythm").value = S.rhythm;
+  $("hr").value = Math.round(S.hr); $("oHr").textContent = Math.round(S.hr);
+  $("spo2").value = Math.round(S.spo2); $("oSpo2").textContent = Math.round(S.spo2);
+  $("rr").value = S.rr; $("oRr").textContent = S.rr;
+  $("oVolPulse").textContent = Math.round(S.volPulse * 100);
+  $("oVolAlarm").textContent = Math.round(S.volAlarm * 100);
+  $("leadOff").classList.toggle("on", S.leadOff);
+  $("probeOff").classList.toggle("on", S.probeOff);
+}
+function bind() {
+  const manual = () => { if (demo) stopDemo(); };
+  $("rhythm").onchange = e => { manual(); S.rhythm = e.target.value; if (S.rhythm === "VT" && S.hr < 140) S.hr = 180; syncControls(); };
+  $("hr").oninput = e => { manual(); S.hr = +e.target.value; syncControls(); };
+  $("spo2").oninput = e => { manual(); S.spo2 = +e.target.value; syncControls(); };
+  $("rr").oninput = e => { manual(); S.rr = +e.target.value; syncControls(); };
+  $("volPulse").oninput = e => { S.volPulse = e.target.value / 100; applyVolumes(); syncControls(); };
+  $("volAlarm").oninput = e => { S.volAlarm = e.target.value / 100; applyVolumes(); syncControls(); };
+  ["hrLo", "hrHi", "spo2Lo", "rrLo", "rrHi"].forEach(k => $(k).onchange = e => { S.limits[k] = +e.target.value; lastNumUpdate = 0; });
+  $("leadOff").onclick = () => { manual(); S.leadOff = !S.leadOff; syncControls(); };
+  $("probeOff").onclick = () => { manual(); S.probeOff = !S.probeOff; syncControls(); };
+  $("nibpBtn").onclick = measureNibp;
+  $("silence").onclick = () => {
+    silencedUntil = now() + 120;
+    silencedSet = new Set(evalAlarms().map(([, m]) => m.split(" ")[0] + m.split(" ")[1]));
+  };
+  $("demo").onclick = () => demo ? stopDemo() : startDemo();
+  $("soundType").onchange = e => { soundType = e.target.value; stopAlarmSound(); curPri = null; };
+  $("advInt").onchange = e => { advInterval = +e.target.value; };
+  $("syncType").onchange = e => { syncType = e.target.value; };
+  $("syncTrack").onchange = e => { syncTrack = e.target.checked; };
+  document.querySelectorAll("[data-test]").forEach(b => b.onclick = () => {
+    stopAlarmSound(); curPri = null;
+    const p = b.dataset.test, ev = pattern(p).ev, last = ev.at(-1);
+    const dur = Math.max(last[0] + last[2], cycleOf(pattern(p)) < 3 ? cycleOf(pattern(p)) * 3 : 0) + 0.3;
+    if (cycleOf(pattern(p)) < 3) { // 連続型（NK1/NK2）は 3 周期ぶん鳴らす
+      for (let k = 0; k < 3; k++) playBurst(p, ctx.currentTime + 0.05 + k * cycleOf(pattern(p)));
+      testUntil = now() + dur; return;
+    }
+    playBurst(p, ctx.currentTime + 0.05);
+    testUntil = now() + dur;
+  });
+}
+function measureNibp() {
+  $("vNibp").textContent = "...";
+  $("nibpTime").textContent = "測定中";
+  setTimeout(() => {
+    if (!hasBeats()) { $("vNibp").textContent = "---/---"; $("nibpTime").textContent = "測定不能"; return; }
+    const hr = effectiveHr(), shock = S.rhythm === "VT" ? -40 : 0;
+    const sys = Math.round(118 + (hr - 72) * 0.25 + shock + (Math.random() - 0.5) * 8);
+    const dia = Math.round(sys * 0.62 + (Math.random() - 0.5) * 4);
+    $("vNibp").textContent = `${sys}/${dia}`;
+    $("vNibp").title = `MAP ${Math.round(dia + (sys - dia) / 3)}`;
+    $("nibpTime").textContent = new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+  }, 3500);
+}
+
+$("startBtn").onclick = () => {
+  initAudio();
+  $("start").remove();
+  channels = [
+    makeChannel("cEcg", "#3cff5a", ecgAt, -0.5, 1.2),
+    makeChannel("cPleth", "#36d7ff", plethAt, -0.1, 1.3),
+    makeChannel("cResp", "#ffe14a", respAt, -0.1, 1.1),
+  ];
+  bind(); syncControls();
+  setInterval(alarmTick, 100);
+  measureNibp();
+  requestAnimationFrame(frame);
+};
+</script>
+</body>
+</html>
